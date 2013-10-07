@@ -1,6 +1,6 @@
 INSTALLDIR=/etc/zabbix/externalscripts
 
-PKG_CONFIG=libpcre libcurl
+PKG_CONFIG=libpcre libcurl libssl
 PKG_CFLAGS=$(shell pkg-config --cflags $(PKG_CONFIG))
 PKG_LDFLAGS=$(shell pkg-config --libs-only-L $(PKG_CONFIG))
 PKG_LDFLAGS_STATIC=$(shell pkg-config --static --libs-only-L $(PKG_CONFIG))

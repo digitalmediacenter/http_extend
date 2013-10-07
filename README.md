@@ -24,6 +24,7 @@ Prerequisites:
  * GNU Make
  * Libpcre and Libpcre-Dev
  * Libcurl and Libcurl-Dev
+ * libssl and libssl-dev
 
 On Ubuntu just do
 (This will install the binary 'mysql_extend' to /etc/zabbix/externalscripts):
@@ -57,6 +58,7 @@ http_extend [-?] [-V] [-v] [-u URL] [-r PCRE-REGEX]
   -f              fail request on curl errors (receive buffer of 5242880 bytes exceded, http-errors, ..)
   -s              provide only the status of the request (zabbix values: 1 = OK, 0 = NOT OK, )
   -m              provide the total delivery time of the request in seconds (zabbix values: >0.0 = OK (seconds), 0.0 = NOT OK)
+  -c              check ssl certificate and return days until expire
   -u URL          Specify the url to fetch
   -t mseconds     Timeout of curl request in 1/1000 seconds (default: 5000 milliseconds)
   -r PCRE-REGEX   Specify the matching regex
@@ -74,6 +76,8 @@ Examples:
 # Check if header value "X-Cache-Lookup: HIT from" is set and return "1", 
 # otherwise return "0" (show whole answer for debugging purposes)
 ./http_extend  -l -u http://foobar.com/ -r '(X-Cache-Lookup: HIT from)' -s  -t 100000 -vvv -a
+# Get days until the SSL certificate expires
+./http_extend -c -u https://goobar.org:443
 ```
 
 Gather data from a apache-server-status page and add it as an measure to zabbix.

@@ -13,12 +13,47 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <math.h>
+#include <openssl/ssl.h>
 
 #include "globals.h"
 #include "callback.h"
 
 #define PACKAGE    "http_extend"
 #define VERSION    "1.x"
+
+#define MAX_CERTS 20
+
+X509 *certificates[MAX_CERTS];
+long certificates_error[MAX_CERTS];
+
+CURLcode sslctxfunc(CURL *curl, SSL_CTX *sslctx, void *parm);
+int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx);
+void print_certificate(X509 *cert); 
+
+static time_t ASN1_GetTimeT(ASN1_TIME* atime)
+{
+  struct tm t;
+  const char* str = (const char*) atime->data;
+  int i = 0;
+
+  memset(&t, 0, sizeof(t));
+
+  if (atime->type == V_ASN1_UTCTIME) {
+    t.tm_year = (str[(i++)] - '0') * 10 + (str[(++i)] - '0');
+    if (t.tm_year < 70)
+      t.tm_year += 100;
+  } else if (atime->type == V_ASN1_GENERALIZEDTIME) {
+    t.tm_year = (str[i++] - '0') * 1000 + (str[++i] - '0') * 100 + (str[++i] - '0') * 10 + (str[++i] - '0');
+    t.tm_year -= 1900;
+  }
+  t.tm_mon = ((str[i++] - '0') * 10 + (str[++i] - '0')) - 1; /* -1 since January is 0 not 1. */
+  t.tm_mday = (str[i++] - '0') * 10 + (str[++i] - '0');
+  t.tm_hour = (str[i++] - '0') * 10 + (str[++i] - '0');
+  t.tm_min  = (str[i++] - '0') * 10 + (str[++i] - '0');
+  t.tm_sec  = (str[i++] - '0') * 10 + (str[++i] - '0');
+  /* Note: we did not adjust the time based on time zone information */
+  return mktime(&t);
+}
 
 void print_help(int exval) {
  if (isatty(0) == 1) {
@@ -34,6 +69,7 @@ void print_help(int exval) {
    printf("  -f              fail request on curl errors (receive buffer of %i bytes exceded, http-errors, ..)\n",MAX_BUF);
    printf("  -s              provide only the status of the request (zabbix values: 1 = OK, 0 = NOT OK, )\n");
    printf("  -m              provide the total delivery time of the request in seconds (zabbix values: >0.0 = OK (seconds), 0.0 = NOT OK)\n");
+   printf("  -c              check ssl certificate and return days until expire\n");
    printf("  -u URL          Specify the url to fetch\n");
    printf("  -t mseconds     Timeout of curl request in 1/1000 seconds (default: %i milliseconds)\n",TIMEOUT);
    printf("  -r PCRE-REGEX   Specify the matching regex\n");
@@ -64,6 +100,7 @@ int timeval_subtract(struct timeval *result, struct timeval *t2, struct timeval 
 }
 
 
+
 int main(int argc, char *argv[]) {
 
    CURL *curl;
@@ -82,6 +119,7 @@ int main(int argc, char *argv[]) {
    int nossl_verify = false;
    int follow_location = false;
    int fail_on_curl_error = false;
+   int ssl_valid_date = false;
 
    struct curl_slist *headers = NULL;
    int i;
@@ -113,7 +151,7 @@ int main(int argc, char *argv[]) {
 	       print_help(1);
 	 }
 
-	 while((opt = getopt(argc, argv, "?Vfamlsvt:u:h:r:i")) != -1) {
+	 while((opt = getopt(argc, argv, "?Vfcamlsvt:u:h:r:i")) != -1) {
 	  switch(opt) {
 	   case 'V':
 	    printf("%s %s\n\n", PACKAGE, VERSION); 
@@ -158,6 +196,8 @@ int main(int argc, char *argv[]) {
 	    headers = curl_slist_append(headers, host_header);
 	    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	    break;
+	   case 'c':
+	    ssl_valid_date = true;
 	   case 'r':
 	    regex = optarg;
 	    break;
@@ -230,7 +270,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	
-	if ((url == NULL) || (regex == NULL)){
+	if (((url == NULL) || (regex == NULL)) && (ssl_valid_date == false)){ 
       print_arguments(argc, argv);
 		print_help(EXIT_FAILURE);
 	}
@@ -247,12 +287,17 @@ int main(int argc, char *argv[]) {
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, curl_timeout);
 
    gettimeofday(&tvBegin, NULL);
-
+   /* Initialize certificate array*/
+   for(i=0; i<MAX_CERTS;i++) {
+      certificates[i] = 0;
+      certificates_error[i] = X509_V_OK;
+   }
+   curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfunc);
+   
 	/* Allow curl to perform the action */
 	ret = curl_easy_perform(curl);
-
 	/* Stop execution here if only status is needed */
-	if ((ret != 0) && (fail_on_curl_error == true)){
+	if ((ret != 0) || (fail_on_curl_error == true)){
 		if (status_only == true){
 			printf("0");	
       }else if (measure_time == true){
@@ -260,6 +305,20 @@ int main(int argc, char *argv[]) {
       }
 		exit(EXIT_FAILURE);
 	}
+
+   /* Get days until certificate expires */
+   if(ssl_valid_date == true) {
+	   if(ret!=0 || certificates[0]==0) {
+        exit(EXIT_FAILURE);
+      }
+      ASN1_TIME * notAfter = X509_get_notAfter(certificates[0]);
+	   time_t now = time(NULL); 
+      time_t expire = ASN1_GetTimeT(notAfter);
+      int time_left = (expire-now)/(60*60*24);
+      printf("%d",time_left);
+	   curl_easy_cleanup(curl);
+      exit(EXIT_SUCCESS);
+   }
 
 	re = pcre_compile(regex,	/* the pattern */
 					  0,		/* default options */
@@ -324,6 +383,24 @@ int main(int argc, char *argv[]) {
 	curl_easy_cleanup(curl);
 
 	exit(EXIT_SUCCESS);
+}
+
+CURLcode sslctxfunc(CURL *curl, SSL_CTX *sslctx, void *parm) {
+  SSL_CTX_set_verify(sslctx, SSL_VERIFY_PEER, verify_callback);
+  return CURLE_OK; 
+}
+
+/* Add certificate chain and errors to certs array */
+int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx) {
+  X509 *cert = X509_STORE_CTX_get_current_cert(x509_ctx);
+  int depth = X509_STORE_CTX_get_error_depth(x509_ctx);
+  int err = X509_STORE_CTX_get_error(x509_ctx); 
+  if (depth < MAX_CERTS && !certificates[depth]) {
+    certificates[depth] = cert;
+    certificates_error[depth] = err;
+    cert->references++;
+  }
+  return 1;
 }
 
 /* vim:ai et ts=2 shiftwidth=2 expandtab tabstop=3 tw=120 */
