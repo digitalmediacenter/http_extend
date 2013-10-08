@@ -25,8 +25,7 @@
 
 X509 *certificates[MAX_CERTS];
 long certificates_error[MAX_CERTS];
-
-CURLcode sslctxfunc(CURL *curl, SSL_CTX *sslctx, void *parm);
+CURLcode sslctxfunc(CURL *curl, void *sslctx, void *parm);
 int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 void print_certificate(X509 *cert); 
 
@@ -39,18 +38,27 @@ static time_t ASN1_GetTimeT(ASN1_TIME* atime)
   memset(&t, 0, sizeof(t));
 
   if (atime->type == V_ASN1_UTCTIME) {
-    t.tm_year = (str[(i++)] - '0') * 10 + (str[(++i)] - '0');
+    t.tm_year = ((str[i++]) - '0') * 10;
+    t.tm_year += ((str[(i++)]) - '0');
     if (t.tm_year < 70)
       t.tm_year += 100;
   } else if (atime->type == V_ASN1_GENERALIZEDTIME) {
-    t.tm_year = (str[i++] - '0') * 1000 + (str[++i] - '0') * 100 + (str[++i] - '0') * 10 + (str[++i] - '0');
+    t.tm_year =  (str[i++] - '0') * 1000;
+    t.tm_year += (str[i++] - '0') * 100;
+    t.tm_year += (str[i++] - '0') * 10;
+    t.tm_year += (str[i++] - '0');
     t.tm_year -= 1900;
   }
-  t.tm_mon = ((str[i++] - '0') * 10 + (str[++i] - '0')) - 1; /* -1 since January is 0 not 1. */
-  t.tm_mday = (str[i++] - '0') * 10 + (str[++i] - '0');
-  t.tm_hour = (str[i++] - '0') * 10 + (str[++i] - '0');
-  t.tm_min  = (str[i++] - '0') * 10 + (str[++i] - '0');
-  t.tm_sec  = (str[i++] - '0') * 10 + (str[++i] - '0');
+  t.tm_mon = (str[i++] - '0') * 10;
+  t.tm_mon += (str[i++] - '0') - 1; /* -1 since January is 0 not 1. */
+  t.tm_mday = (str[i++] - '0') * 10;
+  t.tm_mday += (str[i++] - '0');
+  t.tm_hour = (str[i++] - '0') * 10;
+  t.tm_hour += (str[i++] - '0');
+  t.tm_min  = (str[i++] - '0') * 10;
+  t.tm_min += (str[i++] - '0');
+  t.tm_sec  = (str[i++] - '0') * 10;
+  t.tm_sec += (str[i++] - '0');
   /* Note: we did not adjust the time based on time zone information */
   return mktime(&t);
 }
@@ -124,6 +132,11 @@ int main(int argc, char *argv[]) {
    struct curl_slist *headers = NULL;
    int i;
    int curl_timeout = TIMEOUT;
+  
+   ASN1_TIME * notAfter;
+   time_t now;
+   time_t expire;
+   int time_left;
 
    pcre *re;
    const char *error;
@@ -293,6 +306,10 @@ int main(int argc, char *argv[]) {
       certificates_error[i] = X509_V_OK;
    }
    curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfunc);
+   if(ssl_valid_date == true) {
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, false);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, false);
+   }
    
 	/* Allow curl to perform the action */
 	ret = curl_easy_perform(curl);
@@ -311,10 +328,11 @@ int main(int argc, char *argv[]) {
 	   if(ret!=0 || certificates[0]==0) {
         exit(EXIT_FAILURE);
       }
-      ASN1_TIME * notAfter = X509_get_notAfter(certificates[0]);
-	   time_t now = time(NULL); 
-      time_t expire = ASN1_GetTimeT(notAfter);
-      int time_left = (expire-now)/(60*60*24);
+      notAfter = X509_get_notAfter(certificates[0]);
+      now = time(NULL); 
+      expire = ASN1_GetTimeT(notAfter);
+      time_left = (expire-now)/(60*60*24);
+
       printf("%d",time_left);
 	   curl_easy_cleanup(curl);
       exit(EXIT_SUCCESS);
@@ -385,7 +403,11 @@ int main(int argc, char *argv[]) {
 	exit(EXIT_SUCCESS);
 }
 
-CURLcode sslctxfunc(CURL *curl, SSL_CTX *sslctx, void *parm) {
+CURLcode sslctxfunc(CURL *curl, void *sslctx, void *parm) {
+  (void)parm;
+  if(!curl) {
+   exit(EXIT_FAILURE);
+  }
   SSL_CTX_set_verify(sslctx, SSL_VERIFY_PEER, verify_callback);
   return CURLE_OK; 
 }
@@ -400,6 +422,7 @@ int verify_callback(int preverify_ok, X509_STORE_CTX *x509_ctx) {
     certificates_error[depth] = err;
     cert->references++;
   }
+  (void) preverify_ok;
   return 1;
 }
 
