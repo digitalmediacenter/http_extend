@@ -432,13 +432,15 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr,"measure time returned: '%ld.%06ld'\n", tvDiff.tv_sec, tvDiff.tv_usec);
             }
         } else {
-            char *substring_start = NULL;
-            int substring_length = 0;
-            i = 1;
-            substring_start = wr_buf + ovector[2 * i];
-            substring_length = ovector[2 * i + 1] - ovector[2 * i];
-            printf("%.*s", substring_length, substring_start);
-            fprintf(stderr,"parsing returned: '%.*s'\n", substring_length, substring_start);
+            int n;
+            int start_parse = ovector[2];
+            int end_parse = ovector[3];
+            fprintf(stderr, "parsing returned: ");
+            for(n=start_parse; n<end_parse; n++) {
+                putchar(wr_buf[n]);
+                fprintf(stderr, "%c", wr_buf[n]);
+            }
+            fprintf(stderr, "\n"); 
         }
     }
     curl_easy_cleanup(curl);
